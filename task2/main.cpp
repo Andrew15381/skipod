@@ -44,20 +44,6 @@ int myid, nproc;
 int start_row, end_row, stride;
 float **A, **B;
 
-void printA() {
-        if (myid != 0) {
-                return;
-        }
-        for (int l = 0; l < stride + 2; ++l) {
-                for (int h = 0; h < N; ++h) {
-                        printf("%.3f ", A[l][h]);
-                        fflush(stdout);
-                }
-                printf("\n");
-                fflush(stdout);
-        }
-}
-
 int main(int an, char **as)
 {
         MPI_Init(&an, &as);
@@ -69,8 +55,6 @@ int main(int an, char **as)
         MPI_Comm_create_errhandler(error_handler, &errh);
         MPI_Comm_set_errhandler(global_comm, errh);
 
-        MPI_Barrier(global_comm);
-
         allocate();
 
         double start = MPI_Wtime();
@@ -79,7 +63,6 @@ int main(int an, char **as)
         save_checkpoint();
         setjmp(jbuf);
         for (it = 1; it <= itmax; ++it) {
-                load_checkpoint();
                 resid();
                 if (myid == id_to_kill) {
                         printf("Process %d killed\n", myid);
@@ -93,10 +76,7 @@ int main(int an, char **as)
                 }
                 if (eps < maxeps) break;
         }
-        load_checkpoint();
         verify();
-
-        MPI_Barrier(global_comm);
 
         if (myid == 0) {
                 double end = MPI_Wtime() - start;
@@ -217,25 +197,20 @@ void save_checkpoint()
 {
         MPI_File fileA;
         MPI_File_open(global_comm, cpA, MPI_MODE_CREATE | MPI_MODE_WRONLY, MPI_INFO_NULL, &fileA);
-        if (myid != 0) {
-                i = start_row - 1;
-                MPI_File_write_at(fileA, sizeof(MPI_FLOAT) * N * i, A[0], N, MPI_FLOAT, MPI_STATUS_IGNORE);
+        if (myid == 0) {
+                MPI_File_write_at(fileA, 0, A[0], N, MPI_FLOAT, MPI_STATUS_IGNORE);
         }
         for (i = start_row; i <= end_row; ++i) {
-                MPI_File_write_at(fileA, sizeof(MPI_FLOAT) * N * i, A[i - start_row + 1], N, MPI_FLOAT, MPI_STATUS_IGNORE);
+                MPI_File_write_at(fileA, sizeof(MPI_FLOAT) * N * (i + 1), A[i - start_row + 1], N, MPI_FLOAT, MPI_STATUS_IGNORE);
         }
+        MPI_File_write_at(fileA, sizeof(MPI_FLOAT) * N * (i + 1), A[stride + 1], N, MPI_FLOAT, MPI_STATUS_IGNORE);
         MPI_File_close(&fileA);
-        if (myid != nproc - 1) {
-                i = end_row + 1;
-                MPI_File_write_at(fileA, sizeof(MPI_FLOAT) * N * i, A[stride + 1], N, MPI_FLOAT, MPI_STATUS_IGNORE);
-        }
 
         MPI_File fileB;
         MPI_File_open(global_comm, cpB, MPI_MODE_CREATE | MPI_MODE_WRONLY, MPI_INFO_NULL, &fileB);
         for (i = start_row; i <= end_row; ++i) {
                 MPI_File_write_at(fileB, sizeof(MPI_FLOAT) * N * i, B[i - start_row], N, MPI_FLOAT, MPI_STATUS_IGNORE);
         }
-        MPI_Barrier(global_comm);
         MPI_File_close(&fileB);
 }
 
@@ -243,25 +218,20 @@ void load_checkpoint()
 {
         MPI_File fileA;
         MPI_File_open(global_comm, cpA, MPI_MODE_RDONLY, MPI_INFO_NULL, &fileA);
-        if (myid != 0) {
-                i = start_row - 1;
-                MPI_File_read_at(fileA, sizeof(MPI_FLOAT) * N * i, A[0], N, MPI_FLOAT, MPI_STATUS_IGNORE);
+        if (myid == 0) {
+                MPI_File_read_at(fileA, 0, A[0], N, MPI_FLOAT, MPI_STATUS_IGNORE);
         }
         for (i = start_row; i <= end_row; ++i) {
-                MPI_File_read_at(fileA, sizeof(MPI_FLOAT) * N * i, A[i - start_row + 1], N, MPI_FLOAT, MPI_STATUS_IGNORE);
+                MPI_File_read_at(fileA, sizeof(MPI_FLOAT) * N * (i + 1), A[i - start_row + 1], N, MPI_FLOAT, MPI_STATUS_IGNORE);
         }
+        MPI_File_read_at(fileA, sizeof(MPI_FLOAT) * N * (i + 1), A[stride + 1], N, MPI_FLOAT, MPI_STATUS_IGNORE);
         MPI_File_close(&fileA);
-        if (myid != nproc - 1) {
-                i = end_row + 1;
-                MPI_File_read_at(fileA, sizeof(MPI_FLOAT) * N * i, A[stride + 1], N, MPI_FLOAT, MPI_STATUS_IGNORE);
-        }
 
         MPI_File fileB;
         MPI_File_open(global_comm, cpB, MPI_MODE_RDONLY, MPI_INFO_NULL, &fileB);
         for (i = start_row; i <= end_row; ++i) {
                 MPI_File_read_at(fileB, sizeof(MPI_FLOAT) * N * i, B[i - start_row], N, MPI_FLOAT, MPI_STATUS_IGNORE);
         }
-        MPI_Barrier(global_comm);
         MPI_File_close(&fileB);
 }
 
@@ -275,18 +245,13 @@ static void error_handler(MPI_Comm *comm, int *err, ...)
         
         id_to_kill = -1;
         deallocate();
-
-        fflush(stdout);
         
         MPIX_Comm_shrink(*comm, &global_comm);
         MPI_Comm_rank(global_comm, &myid);
         MPI_Comm_size(global_comm, &nproc);
 
         allocate();
-
-        fflush(stdout);
-        
-        MPI_Barrier(global_comm);
+        load_checkpoint();
         
         longjmp(jbuf, 0);
 }

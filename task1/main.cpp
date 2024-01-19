@@ -2,6 +2,7 @@
 #include <filesystem>
 #include <fstream>
 #include <cstdio>
+#include <string.h>
 #include <array>
 namespace fs = std::filesystem;
 
